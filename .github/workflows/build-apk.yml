@@ -18,39 +18,53 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract uploaded ZIP
+      - name: Find and extract V11 APK project
         shell: bash
         run: |
           set -e
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' | head -n 1)
+          ZIP_FILE="./ADJ_SERVICES_V11_APK_ONLINE_FIX.zip"
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No APK project ZIP found in repository root."
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: V11 APK project ZIP not found:"
+            echo "$ZIP_FILE"
+            echo "Files in repository:"
+            ls -la
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_FILE"
+          echo "Using ZIP: $ZIP_FILE"
 
+          rm -rf extracted
           mkdir -p extracted
+
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f | head -100
+          echo "V11 project extracted successfully."
+          find extracted -maxdepth 4 -type f | head -100
 
       - name: Locate Android project
         shell: bash
         run: |
           set -e
 
-          PROJECT_DIR=$(find extracted -type f -name 'settings.gradle' -printf '%h\n' | head -n 1)
+          PROJECT_DIR=$(find extracted \
+            -type f \
+            -name 'settings.gradle' \
+            -printf '%h\n' \
+            | head -n 1)
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android Gradle project not found."
+            echo "Searching for Gradle files:"
+            find extracted -type f \
+              \( -name 'settings.gradle' -o -name 'build.gradle' \) \
+              -print
             exit 1
           fi
 
-          echo "Android project found at: $PROJECT_DIR"
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -65,12 +79,15 @@ jobs:
         with:
           gradle-version: '8.10'
 
-      - name: Check Gradle project
+      - name: Check Android project
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -e
+
           echo "Gradle project:"
           ls -la
+
           echo ""
           echo "App module:"
           ls -la app
@@ -88,7 +105,7 @@ jobs:
         run: |
           set -e
 
-          echo "Searching for APK..."
+          echo "Generated APK files:"
 
           find "$PROJECT_DIR/app/build/outputs/apk" \
             -type f \
@@ -98,7 +115,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ADJ-SERVICES-APK
+          name: ADJ-SERVICES-APK-V11
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
