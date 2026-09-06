@@ -39,6 +39,7 @@ jobs:
           gradle --version
 
       - name: Verify V14.2 project
+        working-directory: v142_fixed
         run: |
           test -f settings.gradle
           test -f build.gradle
@@ -48,9 +49,11 @@ jobs:
           echo "V14.2 project files verified."
 
       - name: Build V14.2 Debug APK
+        working-directory: v142_fixed
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Verify generated APK
+        working-directory: v142_fixed
         run: |
           test -f app/build/outputs/apk/debug/app-debug.apk
           ls -lh app/build/outputs/apk/debug/app-debug.apk
@@ -59,5 +62,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ADJ-SERVICES-V14.2-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: v142_fixed/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
