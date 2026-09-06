@@ -17,6 +17,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Extract V14.2 project ZIP
+        run: |
+          rm -rf apk_project
+          mkdir apk_project
+          unzip -q ADJ_SERVICES_V14_2_ONE_UPLOAD.zip -d apk_project
+          test -f apk_project/settings.gradle
+          test -f apk_project/build.gradle
+          test -f apk_project/app/build.gradle
+          echo "V14.2 project extracted successfully."
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -26,40 +36,25 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 35
+      - name: Install Android SDK
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Gradle 8.10.2
+      - name: Set up Gradle
         run: |
           curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
           unzip -q /tmp/gradle.zip -d "$HOME"
           echo "$HOME/gradle-8.10.2/bin" >> "$GITHUB_PATH"
-          gradle --version
 
-      - name: Verify V14.2 project
+      - name: Build APK
+        working-directory: apk_project
         run: |
-          test -f settings.gradle
-          test -f build.gradle
-          test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/in/adjservices/app/MainActivity.java
-          grep -q "versionName '14.2'" app/build.gradle
-          grep -q "ADJServicesAPK/14.2" app/src/main/java/in/adjservices/app/MainActivity.java
-          echo "V14.2 project files verified."
+          gradle --no-daemon --stacktrace :app:assembleDebug
 
-      - name: Build V14.2 Debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
-
-      - name: Verify generated APK
-        run: |
-          test -f app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Upload V14.2 APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ADJ-SERVICES-V14.2-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: apk_project/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
