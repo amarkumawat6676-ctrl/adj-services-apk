@@ -1,70 +1,71 @@
 name: Build ADJ SERVICES APK
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build Android APK
+  build-apk:
+    name: Build Release APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Extract V14.5 project ZIP
-        run: |
-          rm -rf apk_project
-          mkdir apk_project
-
-          unzip -q ADJ_SERVICES_V14_5_ONE_UPLOAD.zip -d apk_project
-
-          test -f apk_project/settings.gradle
-          test -f apk_project/build.gradle
-          test -f apk_project/app/build.gradle
-
-          echo "V14.5 project extracted successfully."
-
-      - name: Set up JDK 17
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Clean project
+        run: ./gradlew clean --no-daemon
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Find generated APK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Set up Gradle
-        run: |
-          curl -fsSL -o /tmp/gradle.zip \
-            https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
-
-          unzip -q /tmp/gradle.zip -d "$HOME"
-
-          echo "$HOME/gradle-8.10.2/bin" >> "$GITHUB_PATH"
-
-      - name: Build signed release APK
-        working-directory: apk_project
-        run: |
-          gradle --no-daemon --stacktrace :app:assembleRelease
+          echo "Searching for generated APK..."
+          find . -type f \
+            -path "*/build/outputs/apk/release/*.apk" \
+            -print
 
       - name: Rename APK
         run: |
-          cp apk_project/app/build/outputs/apk/release/app-release.apk ADJ-SERVICES.apk
+          APK=$(find . -type f \
+            -path "*/build/outputs/apk/release/*.apk" \
+            | head -n 1)
 
-      - name: Upload APK artifact
+          if [ -z "$APK" ]; then
+            echo "ERROR: Release APK not found."
+            exit 1
+          fi
+
+          cp "$APK" "ADJ-SERVICES.apk"
+
+          echo "Final APK:"
+          ls -lh ADJ-SERVICES.apk
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ADJ-SERVICES-V14.5
+          name: ADJ-SERVICES-APK
           path: ADJ-SERVICES.apk
           if-no-files-found: error
+          retention-days: 30
