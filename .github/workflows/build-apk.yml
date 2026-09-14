@@ -10,13 +10,49 @@ permissions:
   contents: read
 
 jobs:
-  build-apk:
+  build:
     name: Build Release APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Find Android Source ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" \
+            ! -name "ADJ-SERVICES-*.zip" \
+            | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Android source ZIP not found in repository root."
+            echo "Please upload the ADJ SERVICES Android source ZIP to the repository root."
+            exit 1
+          fi
+
+          echo "Found source ZIP: $ZIP_FILE"
+          echo "SOURCE_ZIP=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      - name: Extract Android Project
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf apk_project
+          mkdir -p apk_project
+
+          unzip -q "$SOURCE_ZIP" -d apk_project
+
+          echo "Checking Android project..."
+
+          test -f apk_project/settings.gradle
+          test -f apk_project/build.gradle
+          test -f apk_project/app/build.gradle
+
+          echo "Android project found successfully."
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -27,39 +63,51 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      - name: Clean project
-        run: ./gradlew clean --no-daemon
-
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --no-daemon
-
-      - name: Find generated APK
+        shell: bash
         run: |
-          echo "Searching for generated APK..."
-          find . -type f \
-            -path "*/build/outputs/apk/release/*.apk" \
-            -print
+          set -e
 
-      - name: Rename APK
+          curl -fsSL \
+            -o /tmp/gradle.zip \
+            https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
+
+          unzip -q /tmp/gradle.zip -d "$HOME"
+
+          echo "$HOME/gradle-8.10.2/bin" >> "$GITHUB_PATH"
+
+      - name: Build Signed Release APK
+        working-directory: apk_project
+        shell: bash
         run: |
-          APK=$(find . -type f \
-            -path "*/build/outputs/apk/release/*.apk" \
+          set -e
+
+          gradle --no-daemon --stacktrace :app:assembleRelease
+
+      - name: Find Generated APK
+        shell: bash
+        run: |
+          set -e
+
+          APK=$(find apk_project/app/build/outputs/apk/release \
+            -type f -name "*.apk" \
             | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: Release APK not found."
+            echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          cp "$APK" "ADJ-SERVICES.apk"
+          echo "Generated APK: $APK"
 
-          echo "Final APK:"
+          cp "$APK" ADJ-SERVICES.apk
+
           ls -lh ADJ-SERVICES.apk
 
       - name: Upload APK Artifact
