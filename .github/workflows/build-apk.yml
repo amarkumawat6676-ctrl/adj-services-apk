@@ -5,115 +5,163 @@ on:
   push:
     branches:
       - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  build-release-apk:
     name: Build Release APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Find Android Source ZIP
+        id: find_zip
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" \
-            ! -name "ADJ-SERVICES-*.zip" \
-            | head -n 1)
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' \
+            -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Android source ZIP not found in repository root."
-            echo "Please upload the ADJ SERVICES Android source ZIP to the repository root."
+            echo "ERROR: No Android source ZIP found."
             exit 1
           fi
 
-          echo "Found source ZIP: $ZIP_FILE"
-          echo "SOURCE_ZIP=$ZIP_FILE" >> "$GITHUB_ENV"
+          echo "Using source ZIP: $ZIP_FILE"
+          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Extract Android Project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           rm -rf apk_project
           mkdir -p apk_project
 
-          unzip -q "$SOURCE_ZIP" -d apk_project
+          unzip -q "${{ steps.find_zip.outputs.zip_file }}" -d apk_project
 
-          echo "Checking Android project..."
+          echo "Extracted project:"
+          find apk_project -maxdepth 2 -type f | head -100
 
-          test -f apk_project/settings.gradle
-          test -f apk_project/build.gradle
-          test -f apk_project/app/build.gradle
-
-          echo "Android project found successfully."
-
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
+      - name: Locate Android Project Root
+        id: project
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          set -euo pipefail
 
-      - name: Setup Gradle
-        shell: bash
-        run: |
-          set -e
+          if [ -f "apk_project/settings.gradle" ]; then
+            PROJECT_ROOT="apk_project"
+          elif [ -f "apk_project/settings.gradle.kts" ]; then
+            PROJECT_ROOT="apk_project"
+          else
+            PROJECT_ROOT=$(find apk_project -type f \
+              \( -name settings.gradle -o -name settings.gradle.kts \) \
+              -printf '%h\n' | head -1)
+          fi
 
-          curl -fsSL \
-            -o /tmp/gradle.zip \
-            https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
-
-          unzip -q /tmp/gradle.zip -d "$HOME"
-
-          echo "$HOME/gradle-8.10.2/bin" >> "$GITHUB_PATH"
-
-      - name: Build Signed Release APK
-        working-directory: apk_project
-        shell: bash
-        run: |
-          set -e
-
-          gradle --no-daemon --stacktrace :app:assembleRelease
-
-      - name: Find Generated APK
-        shell: bash
-        run: |
-          set -e
-
-          APK=$(find apk_project/app/build/outputs/apk/release \
-            -type f -name "*.apk" \
-            | head -n 1)
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "ERROR: Android project root not found."
             exit 1
           fi
 
-          echo "Generated APK: $APK"
+          echo "Android project root: $PROJECT_ROOT"
+          echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
-          cp "$APK" ADJ-SERVICES.apk
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
 
-          ls -lh ADJ-SERVICES.apk
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.7'
 
-      - name: Upload APK Artifact
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK_ROOT" ]; then
+            echo "ERROR: Android SDK path not found."
+            exit 1
+          fi
+
+          echo "Android SDK: $SDK_ROOT"
+
+          if [ -d "$SDK_ROOT/platforms/android-35" ]; then
+            echo "Android 35 platform found."
+          else
+            echo "ERROR: Android 35 platform is missing."
+            exit 1
+          fi
+
+          if [ -d "$SDK_ROOT/build-tools/35.0.0" ]; then
+            echo "Build Tools 35.0.0 found."
+          else
+            echo "ERROR: Build Tools 35.0.0 are missing."
+            exit 1
+          fi
+
+      - name: Verify Firebase and signing files
+        working-directory: ${{ steps.project.outputs.project_root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f app/google-services.json
+          echo "Firebase configuration found."
+
+          if [ -f "../adj-services-release.keystore" ]; then
+            echo "Release keystore found at project parent."
+          elif [ -f "adj-services-release.keystore" ]; then
+            echo "Release keystore found in project root."
+          else
+            echo "WARNING: Release keystore not found in expected locations."
+          fi
+
+      - name: Build Release APK
+        working-directory: ${{ steps.project.outputs.project_root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle --no-daemon \
+            :app:assembleRelease \
+            --stacktrace
+
+      - name: Find Generated APK
+        id: apk
+        working-directory: ${{ steps.project.outputs.project_root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK=$(find app/build/outputs/apk/release \
+            -type f -name '*.apk' | head -1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: Release APK was not generated."
+            exit 1
+          fi
+
+          echo "APK generated:"
+          ls -lh "$APK"
+
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ADJ-SERVICES-APK
-          path: ADJ-SERVICES.apk
+          name: ADJ-SERVICES-V15.3-release
+          path: ${{ steps.project.outputs.project_root }}/${{ steps.apk.outputs.apk_path }}
           if-no-files-found: error
-          retention-days: 30
