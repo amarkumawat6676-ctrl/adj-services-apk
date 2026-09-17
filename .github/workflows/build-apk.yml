@@ -73,6 +73,27 @@ jobs:
           echo "Android project root: $PROJECT_ROOT"
           echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare Release Version
+        working-directory: ${{ steps.project.outputs.project_root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f app/build.gradle || { echo "ERROR: app/build.gradle missing."; exit 1; }
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/build.gradle')
+          s=p.read_text()
+          import re
+          s,n1=re.subn(r"versionName\s+['\"][^'\"]+['\"]", "versionName '15.9.10'", s, count=1)
+          s,n2=re.subn(r"versionCode\s+\d+", "versionCode 37", s, count=1)
+          if n1 != 1 or n2 != 1:
+              raise SystemExit(f"Could not update versionName/versionCode: {n1}/{n2}")
+          p.write_text(s)
+          print('Prepared versionName 15.9.10 / versionCode 37')
+          PY
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -180,7 +201,13 @@ jobs:
           echo "Generated APK:"
           ls -lh "$APK"
 
-          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+          mkdir -p release
+          cp "$APK" release/ADJ-SERVICES.apk
+
+          test -s release/ADJ-SERVICES.apk \
+            || { echo "ERROR: ADJ-SERVICES.apk is empty."; exit 1; }
+
+          echo "apk_path=release/ADJ-SERVICES.apk" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -201,4 +228,5 @@ jobs:
           echo "Version: ${{ steps.version.outputs.version_name }}"
           echo "VersionCode: ${{ steps.version.outputs.version_code }}"
           echo "Release: v${{ steps.version.outputs.version_name }}"
+          echo "Asset: ADJ-SERVICES.apk"
           echo "=========================================="
